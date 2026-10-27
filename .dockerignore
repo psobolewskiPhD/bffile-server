@@ -1,0 +1,4 @@
+# The image needs only the script and its lock; keep the rest of the project out of the build
+*
+!serve_bffile_zstd.py
+!serve_bffile_zstd.py.lock
