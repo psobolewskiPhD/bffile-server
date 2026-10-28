@@ -4,7 +4,7 @@
 # dependencies = [
 #   # until a bffile release has tile_size="auto" and keeps RGB samples in one chunk
 #   # (bffile#75): the commit of feat/auto-tile-size this script was tested with
-#   "bffile[zarr] @ git+https://github.com/psobolewskiPhD/bffile@573eb813a13cbf8a5bec5355f93484d49aa91924",
+#   "bffile[zarr] @ git+https://github.com/psobolewskiPhD/bffile@83798a1e458e385a362612015ea7570cfd937acd",
 #   "click",
 #   "numcodecs",
 #   "scyjava",
@@ -41,8 +41,8 @@ the same 404 as a missing file. A multi-file format (e.g. .vsi with its folder) 
 served at its main file.
 
 Chunks follow each array's native tiles (bffile's tile_size="auto"), grouped up to
-512 pixels a side, or are whole planes for readers without native tiles. T, C and Z
-are chunked by 1; RGB samples are served as channels.
+512 pixels a side; readers without native tiles get bands of whole strips. T, C and
+Z are chunked by 1; RGB samples are served as channels.
 
 Each open image has one reader for metadata and --readers more that read its chunks
 in parallel, so up to --max-open x (--readers + 1) files are open at once.
@@ -61,6 +61,7 @@ import queue
 import signal
 import threading
 from collections import OrderedDict
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import NamedTuple
 
@@ -212,22 +213,35 @@ class ImageRouter:
         self._opening: dict[str, asyncio.Task] = {}  # images being opened, shared by their requests
         self._rejected: set[str] = set()  # files Bio-Formats can't read, not tried again
 
-    def parse_request_path(self, url_path: str) -> ImageRequest | None:
-        """Split a URL path at the file it names under the root:
-        '/a/image.czi.zarr/0/0/c/0/0/0/1/2' -> ImageRequest('a/image.czi', 'a/image.czi.zarr', '0/0/c/0/0/0/1/2').
-        None if no prefix of the path is a file under the root."""
+    @staticmethod
+    def split_request_path(url_path: str) -> Iterator[ImageRequest]:
+        """Each way to split a URL path into an image and a key, shortest image first:
+        '/a/image.czi.zarr/0/zarr.json' -> ('a', 'a', 'image.czi.zarr/0/zarr.json'),
+        ('a/image.czi', 'a/image.czi.zarr', '0/zarr.json'), ... Nothing for a path with
+        an empty, '.' or '..' segment."""
         parts = url_path.strip("/").split("/")
         if any(p in ("", ".", "..") for p in parts):
-            return None
+            return
         for i in range(1, len(parts) + 1):
             prefix = "/".join(parts[:i])
-            image = prefix.removesuffix(ZARR_URL_SUFFIX)
-            path = self.root / image
-            if image in self.open_images or path.is_file():
-                if image not in self.open_images and not path.resolve().is_relative_to(self.root):
-                    return None  # a symlink out of the root (open images were checked)
-                return ImageRequest(image, prefix, "/".join(parts[i:]))
-            if not (self.root / prefix).is_dir():
+            yield ImageRequest(prefix.removesuffix(ZARR_URL_SUFFIX), prefix, "/".join(parts[i:]))
+
+    def find_open_image(self, url_path: str) -> ImageRequest | None:
+        """The URL path split at the open image it names, or None. Checks no files, so
+        requests for already open images don't wait on the filesystem."""
+        return next((r for r in self.split_request_path(url_path) if r.image in self.open_images), None)
+
+    def find_image_file(self, url_path: str) -> ImageRequest | None:
+        """The URL path split at the file it names under the root:
+        '/a/image.czi.zarr/0/0/c/0/0/0/1/2' -> ImageRequest('a/image.czi', 'a/image.czi.zarr', '0/0/c/0/0/0/1/2').
+        None if no prefix of the path is a file under the root. Blocking: it checks the
+        filesystem at each level of the path."""
+        for request in self.split_request_path(url_path):
+            path = self.root / request.image
+            if path.is_file():
+                # a symlink out of the root is answered like a missing file
+                return request if path.resolve().is_relative_to(self.root) else None
+            if not (self.root / request.prefix).is_dir():
                 return None
         return None
 
@@ -277,7 +291,10 @@ class ImageRouter:
     async def __call__(self, scope, receive, send):
         # the path below this app's mount point (the route's {path}), not scope["path"],
         # which also holds root_path when the app is mounted under a prefix
-        request = self.parse_request_path(scope["path_params"]["path"])
+        url_path = scope["path_params"]["path"]
+        request = self.find_open_image(url_path)
+        if request is None:
+            request = await asyncio.to_thread(self.find_image_file, url_path)
         if request is None:
             return await PlainTextResponse("Not found", 404)(scope, receive, send)
         try:
@@ -342,7 +359,7 @@ def build_app(root: pathlib.Path, *, max_open: int, readers: int, max_reads: int
                 type=click.Path(exists=True, file_okay=False, path_type=pathlib.Path))
 @click.option("-p", "--port", default=9876, show_envvar=True)
 @click.option("--host", default="0.0.0.0", show_envvar=True)
-@click.option("-n", "--max-open", default=32, show_envvar=True,
+@click.option("-n", "--max-open", default=32, type=click.IntRange(min=1), show_envvar=True,
               help="Images kept open at once (least recently used are evicted).")
 @click.option("-r", "--readers", default=4, type=click.IntRange(min=1), show_envvar=True,
               help="Bio-Formats readers per image that read its chunks in parallel, "
