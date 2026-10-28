@@ -55,9 +55,9 @@ multi-file format (such as .vsi with its folder) is served at its main file.
 - **Chunks** use bffile's `tile_size="auto"`, since Bio-Formats decodes whole
   native tiles whatever region is asked for: a multiple of each array's native tile
   size, up to 512 pixels a side (480x480 for an SVS's 240x240 tiles). Readers
-  without native tiles (such as ND2 or PNG) can decode the whole plane for any
-  region, so their chunks are whole planes. T, C and Z are chunked by 1; RGB samples
-  are served as channels.
+  without native tiles (such as ND2 or PNG) get full-width bands of whole strips, up
+  to 512 rows, so a chunk stays small however large the plane. T, C and Z are
+  chunked by 1; RGB samples are served as channels.
 - **Readers**: a Bio-Formats reader reads one chunk at a time, so each open image
   has one reader for metadata and `--readers` more, each with its own open file, that
   read its chunks in parallel (4 readers: about 3-4x the chunks per second of one).
@@ -96,8 +96,9 @@ OME-XML metadata. Keep the server private, like the image files themselves.
 The `Dockerfile` builds an image for Google Cloud Run. bffile is installed from git,
 and Java and the Bio-Formats jars are downloaded, in a build stage; only the
 resulting environment and caches are copied into the final image, so a cold start
-downloads nothing. Bio-Formats is pinned to 8.5.0 (`BIOFORMATS_VERSION`). The image
-expects the images mounted at `/images`, keeps at most 12 images open
+downloads nothing. Bio-Formats is pinned to 8.5.0 (`BIOFORMATS_VERSION`), and runs
+on Java 21 (Zulu JRE; `BFF_JAVA_VERSION`), which Bio-Formats releases are built with. 
+The image expects the images mounted at `/images`, keeps at most 12 images open
 (`BFFILE_SERVE_MAX_OPEN`), and listens on `$PORT` (8080 by default).
 
 For 5-10 concurrent users, CPU and memory measured locally suggest 4 vCPU and
