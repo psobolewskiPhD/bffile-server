@@ -10,7 +10,7 @@ resolution-markers = [
 
 [manifest]
 requirements = [
-    { name = "bffile", extras = ["zarr"], git = "https://github.com/psobolewskiPhD/bffile?rev=573eb813a13cbf8a5bec5355f93484d49aa91924" },
+    { name = "bffile", extras = ["zarr"], git = "https://github.com/psobolewskiPhD/bffile?rev=83798a1e458e385a362612015ea7570cfd937acd" },
     { name = "click" },
     { name = "numcodecs" },
     { name = "scyjava" },
@@ -41,8 +41,8 @@ wheels = [
 
 [[package]]
 name = "bffile"
-version = "0.1.dev95+g573eb813a"
-source = { git = "https://github.com/psobolewskiPhD/bffile?rev=573eb813a13cbf8a5bec5355f93484d49aa91924#573eb813a13cbf8a5bec5355f93484d49aa91924" }
+version = "0.1.dev92+g83798a1e4"
+source = { git = "https://github.com/psobolewskiPhD/bffile?rev=83798a1e458e385a362612015ea7570cfd937acd#83798a1e458e385a362612015ea7570cfd937acd" }
 dependencies = [
     { name = "numpy" },
     { name = "ome-types", extra = ["lxml", "pint"] },

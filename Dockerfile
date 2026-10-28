@@ -1,6 +1,17 @@
 # bffile is installed from git, and Java and Bio-Formats are downloaded on first use:
 # do both in a build stage of its own, and copy the results into a slim image
-FROM debian:trixie-slim AS build
+
+# The Java and Bio-Formats versions, in a stage both others start from: the final image
+# must ask for the ones the build stage downloaded, or it downloads others at every start.
+# Bio-Formats is pinned: to Zulu Java 21, which Bio-Formats releases are built with.
+# Also prevent cjdk from treating its index of Java releases as stale
+FROM debian:trixie-slim AS base
+ENV BIOFORMATS_VERSION=8.5.0 \
+    BFF_JAVA_VENDOR=zulu-jre \
+    BFF_JAVA_VERSION=21 \
+    CJDK_INDEX_TTL=inf
+
+FROM base AS build
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
@@ -21,12 +32,10 @@ RUN uv venv /opt/venv --python 3.14 --managed-python \
         --compile-bytecode --no-cache
 
 # Java and Bio-Formats (with its dependencies) are downloaded on the first JVM start,
-# into ~/.cache/cjdk, ~/.m2 and ~/.jgo: start it now, so a cold start downloads
-# nothing. Bio-Formats is pinned: the default, its latest release, is looked up online
-ENV BIOFORMATS_VERSION=8.5.0
+# into ~/.cache/cjdk, ~/.m2 and ~/.jgo: start it now, so a cold start downloads nothing
 RUN /opt/venv/bin/python -c "from bffile import BioFile; print('Bio-Formats', BioFile.bioformats_version())"
 
-FROM debian:trixie-slim
+FROM base
 
 # the same paths as in the build stage: the environment's interpreter links to the
 # Python, and the Java caches record their own paths. Cloud Run runs the container as
@@ -37,8 +46,7 @@ COPY --from=build /root/.cache/cjdk /root/.cache/cjdk
 COPY --from=build /root/.m2 /root/.m2
 COPY --from=build /root/.jgo /root/.jgo
 ENV VIRTUAL_ENV=/opt/venv \
-    PATH=/opt/venv/bin:$PATH \
-    BIOFORMATS_VERSION=8.5.0
+    PATH=/opt/venv/bin:$PATH
 
 WORKDIR /app
 COPY serve_bffile_zstd.py ./
